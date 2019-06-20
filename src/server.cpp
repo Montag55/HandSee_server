@@ -47,13 +47,38 @@ bool Server::run(){
       std::cout << "accept" << std::endl;
       exit(EXIT_FAILURE);
   }
+  
+  // while(valread = read( new_socket , m_buffer.data(), m_buffer.size()) > 0 ){
+  //   for(unsigned int i = 0; i < m_buffer.size(); i++){
+  //     if(&m_buffer[i] != NULL)
+  //       std::cout << "i: " << i << "; " << &m_buffer[i] << std::endl;
+  //   }
+  // }
 
-  while(valread = read( new_socket , m_buffer.data(), m_buffer.size()) > 0 ){
-    for(unsigned int i = 0; i < m_buffer.size(); i++){
-      if(&m_buffer[i] != NULL)
-        std::cout << "i: " << i << "; " << &m_buffer[i] << std::endl;
+  int bytesReceived = 0;
+  FILE *image;
+  char buffer[1024] = {0};
+  image = fopen("recu.jpg", "wba");
+
+  while (bytesReceived < sizeof(buffer)){
+    std::cout << "Reading image byte array" << std::endl;
+    int n = 0;
+    if ((n = recv(new_socket, buffer, sizeof(buffer), 0)) < 0)
+    {
+      perror("recv_size()");
+      exit(errno);
     }
+    bytesReceived += n;
+    std::cout << n << std::endl;
+    std::cout << "Converting byte array to image" << std::endl;
+    fwrite(buffer, sizeof(char), n, image);
+    std::cout << "done" << std::endl;
+
+    printf("%s\n", buffer);
+    char *response = "Message Received!";
+    send(new_socket, response, strlen(response), 0);
   }
+  fclose(image);
 
   return EXIT_FAILURE;
 }
