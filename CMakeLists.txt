@@ -11,11 +11,12 @@ set(OpenCV_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(OpenCV REQUIRED)
 
 set(SRC
-    src/main.cpp    
+    src/main.cpp
+    src/server.cpp
 )
 
-set(HEADERS       
-    include/header.hpp
+set(HEADERS
+    include/server.hpp
 )
 
 include_directories( ${CMAKE_CURRENT_SOURCE_DIR}/include)
