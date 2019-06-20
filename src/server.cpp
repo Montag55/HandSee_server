@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include <string>
 #include <iostream>
+#include <stdio.h>
 
 Server::Server(char* server_ip, char* server_port, int buffer_size):
   m_server_ip {server_ip},
@@ -55,4 +56,84 @@ bool Server::run(){
   }
 
   return EXIT_FAILURE;
+}
+
+cv::Mat Server::creatDisplacementMap(){
+  // Note: currently reading from file
+  cv::Mat testIMG = cv::imread("test.jpg", 1);
+  cv::Mat testIMG_A = cv::imread("/home/lucas/Desktop/left.jpg", 0);
+  cv::Mat testIMG_B = cv::imread("/home/lucas/Desktop/right.jpg", 0);
+  if (!testIMG.data) {
+    std::cout << "\nError: no source image data.\n" << std::endl;
+  }
+
+  cv::cvtColor(testIMG, testIMG, 6);
+  std::tuple<cv::Mat, cv::Mat> splitImages = splitImage(testIMG);
+  
+
+  // cv::Size downScale(std::get<0>(splitImages).size().width / 2, std::get<0>(splitImages).size().height / 2);
+  // cv::resize(std::get<0>(splitImages), std::get<0>(splitImages), downScale);
+  // cv::resize(std::get<1>(splitImages), std::get<1>(splitImages), downScale);
+  // std::cout << std::get<0>(splitImages).size().width << "x" << std::get<0>(splitImages).size().height << std::endl;
+  // std::cout << std::get<1>(splitImages).size().width << "x" << std::get<1>(splitImages).size().height << std::endl;
+
+  cv::Mat disp_left, disp_right, filteredDisp, raw_Disp_vis, filter_Disp_vis;
+  cv::Mat left = std::get<0>(splitImages);
+  cv::Mat right = std::get<1>(splitImages);
+
+  cv::Ptr<cv::StereoSGBM> matcher_left = cv::StereoSGBM::create(0, 16, 5, 0, 0, 0, 0, 0, 0, 0, cv::StereoSGBM::MODE_HH );
+  cv::Ptr<cv::StereoSGBM> matcher_right = cv::StereoSGBM::create(0, 16, 5, 0, 0, 0, 0, 0, 0, 0, cv::StereoSGBM::MODE_HH );
+  // cv::Ptr<cv::StereoMatcher> matcher_right = cv::ximgproc::createRightMatcher(matcher_left);
+
+  matcher_left->compute(std::get<0>(splitImages), std::get<1>(splitImages), disp_left);
+  matcher_right->compute(std::get<1>(splitImages), std::get<0>(splitImages), disp_right);
+
+  saveImg(disp_left, "flip1.jpg");
+  saveImg(disp_right, "flip2.jpg");
+
+  cv::Ptr<cv::ximgproc::DisparityWLSFilter> wls_filter = cv::ximgproc::createDisparityWLSFilter(matcher_left);
+  wls_filter->setLambda(8000.0);
+  wls_filter->setSigmaColor(1.5);
+  wls_filter->filter(disp_left, left, filteredDisp, disp_right);
+  cv::ximgproc::getDisparityVis(filteredDisp, filter_Disp_vis, 2);
+
+  cv::normalize(filter_Disp_vis, filter_Disp_vis, 255, 0, cv::NORM_MINMAX);
+
+  saveImg(filter_Disp_vis, "disparityMapfiltered.jpg");
+  return testIMG;
+}
+
+std::tuple<cv::Mat, cv::Mat> Server::splitImage(cv::Mat inputIMG){
+  /*
+   * Note: Currently not entire image is used. 13 pixel rows are left out since
+   * the mirror edge crosses all of these (as far as i can tell by using GIMP)
+  **/
+  cv::Rect upperRect(0, 0, inputIMG.size().width, 617);
+  cv::Rect lowerRect(0, 630, inputIMG.size().width, inputIMG.size().height - (630 + 33));
+  
+  cv::Mat upperReflection = inputIMG(upperRect);
+  cv::Mat lowerReflection = inputIMG(lowerRect);
+  cv::flip(lowerReflection, lowerReflection, 0);
+  saveImg(lowerReflection, "flip.jpg");
+
+  transpose(lowerReflection, lowerReflection);
+  transpose(upperReflection, upperReflection);
+
+  cv::flip(lowerReflection, lowerReflection, 1);
+  cv::flip(upperReflection, upperReflection, 1);
+  saveImg(lowerReflection, "flip1.jpg");
+  saveImg(upperReflection, "flip2.jpg");
+
+  std::tuple<cv::Mat, cv::Mat> images(lowerReflection, upperReflection);
+
+  return images;
+}
+
+void Server::saveImg(cv::Mat img, std::string filename){
+  if (cv::imwrite(filename, img)){
+    std::cout << "Saved image to: " << "build/" << filename << std::endl;
+  }
+  else {
+    std::cout << "Error: could not save image to: " << "build/" << filename << "." << std::endl;
+  }
 }
