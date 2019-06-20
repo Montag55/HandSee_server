@@ -31,8 +31,7 @@ int main(int argc, char **argv) {
     int addrlen = sizeof(address);
     const char* server_ip = argv[1];
     const long port = std::stol(argv[2]);
-    char buffer[15773] = {0};
-    char bufferTmp[15773] = {0};
+    char buffer[1024] = {0};
 
     // Creating socket file descriptor
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
