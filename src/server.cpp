@@ -63,11 +63,11 @@ bool Server::run(){
   while (bytesReceived < sizeof(buffer)){
     std::cout << "Reading image byte array" << std::endl;
     int n = 0;
-    if ((n = recv(new_socket, buffer, sizeof(buffer), 0)) < 0)
-    {
+    if ((n = recv(new_socket, buffer, sizeof(buffer), 0)) < 0) {
       perror("recv_size()");
       exit(errno);
     }
+    
     bytesReceived += n;
     std::cout << n << std::endl;
     std::cout << "Converting byte array to image" << std::endl;
@@ -75,8 +75,7 @@ bool Server::run(){
     std::cout << "done" << std::endl;
 
     printf("%s\n", buffer);
-    char *response = "Message Received!";
-    send(new_socket, response, strlen(response), 0);
+    sendMessage(new_socket, "Message Received!");
   }
   fclose(image);
 
@@ -87,6 +86,8 @@ cv::Mat Server::creatDisplacementMap(){
   // Note: currently reading from file
   cv::Mat testIMG = cv::imread("test3.jpg", 1);
   std::tuple<cv::Mat, cv::Mat> skinMasks = splitImage(testIMG);
+  cv::Size downScale(std::get<0>(skinMasks).size().width / 2, std::get<0>(skinMasks).size().height / 2);
+  cv::resize(std::get<0>(skinMasks), std::get<0>(skinMasks), downScale);
   cv::Mat skinMask = creatSkinMask(std::get<0>(skinMasks));
 
   if (!testIMG.data) {
@@ -95,6 +96,8 @@ cv::Mat Server::creatDisplacementMap(){
 
   cv::cvtColor(testIMG, testIMG, cv::COLOR_BGR2GRAY);
   std::tuple<cv::Mat, cv::Mat> splitImages = splitImage(testIMG);
+  cv::resize(std::get<0>(splitImages), std::get<0>(splitImages), downScale);	  
+  cv::resize(std::get<1>(splitImages), std::get<1>(splitImages), downScale);
   
   cv::Mat disp_left, disp_right, filteredDisp, raw_Disp_vis, filter_Disp_vis;
   cv::Mat left = std::get<0>(splitImages);
@@ -105,7 +108,7 @@ cv::Mat Server::creatDisplacementMap(){
   left_matcher->setP1(24 * window_size * window_size);
   left_matcher->setP2(96 * window_size * window_size);
   left_matcher->setUniquenessRatio(0);
-  left_matcher->setDisp12MaxDiff(1000000);
+  left_matcher->setDisp12MaxDiff(80000);
   left_matcher->setSpeckleWindowSize(0);
   left_matcher->setPreFilterCap(63);
   left_matcher->setMode(cv::StereoSGBM::MODE_HH);
@@ -126,12 +129,11 @@ cv::Mat Server::creatDisplacementMap(){
   wls_filter->filter(disp_left, std::get<0>(splitImages), filteredDisp, disp_right, ROI, std::get<1>(splitImages));
   cv::ximgproc::getDisparityVis(filteredDisp, filter_Disp_vis, 2.0f);
 
-  cv::normalize(filter_Disp_vis, filter_Disp_vis, 255, 0, cv::NORM_MINMAX);
-  
   cv::Mat masked;
+  cv::normalize(filter_Disp_vis, filter_Disp_vis, 255.0f, 0, cv::NORM_MINMAX);
   cv::bitwise_and(filter_Disp_vis, filter_Disp_vis, masked, skinMask);
 
-  saveImg(masked, "disparityMapfiltered.jpg");
+  saveImg(masked, "disparityMapMasked&filtered.jpg");
   return masked;
 }
 
@@ -176,12 +178,18 @@ cv::Rect Server::computeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matche
 }
 
 cv::Mat Server::creatSkinMask(const cv::Mat &srcImg) {
-  cv::Mat skinMask, colrImg;
-  cv::cvtColor(srcImg, colrImg, cv::COLOR_BGR2HSV);
-  cv::inRange(colrImg, cv::Scalar(0, 48, 80), cv::Scalar(20, 255, 255), skinMask);
-  cv::GaussianBlur(skinMask, skinMask, cv::Size2i(3, 3), 0);
+  cv::Mat HSVMask, colrImg, nrgb, skinMask, RGBMask;
 
-  saveImg(skinMask, "skinmask.jpg");
+  cv::cvtColor(srcImg, colrImg, cv::COLOR_BGR2HSV);
+  cv::inRange(colrImg, cv::Scalar(0, 51, 89), cv::Scalar(25, 174, 255), HSVMask);
+  cv::GaussianBlur(HSVMask, HSVMask, cv::Size2i(3, 3), 0);
+  
+  normalize(srcImg, nrgb, 0, 1.0, cv::NORM_MINMAX);
+  cv::inRange(nrgb, cv::Scalar(0, 0.28, 0.36), cv::Scalar(1.0, 0.363, 0.465), RGBMask);
+  cv::GaussianBlur(RGBMask, RGBMask, cv::Size2i(3, 3), 0);
+  bitwise_not(RGBMask, RGBMask);
+
+  skinMask = HSVMask & RGBMask;
   return skinMask;
 }
 
@@ -192,4 +200,11 @@ void Server::saveImg(cv::Mat img, std::string filename){
   else {
     std::cout << "Error: could not save image to: " << "build/" << filename << "." << std::endl;
   }
+}
+
+void Server::sendMessage(int connfd, char *format){
+  char sendBuff[1024];
+  memset(sendBuff, '0', sizeof(sendBuff));
+  snprintf(sendBuff, sizeof(sendBuff), format);
+  write(connfd, sendBuff, strlen(sendBuff));
 }

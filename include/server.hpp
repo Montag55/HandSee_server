@@ -21,6 +21,7 @@ class Server{
     std::tuple<cv::Mat, cv::Mat> splitImage(const cv::Mat& inputIMG);
     cv::Rect computeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher_instance);
     void saveImg(cv::Mat img, std::string filename);
+    void sendMessage(int connfd, char *format);
 
   private : 
     char *m_server_ip;

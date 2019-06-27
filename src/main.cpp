@@ -1,17 +1,10 @@
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
 #include <string.h>
+#include <chrono>
 #include "server.hpp"
 
 using namespace cv;
-
-
-void sendMessage(int connfd, char * format) {
-    char sendBuff[1024];
-    memset(sendBuff, '0', sizeof(sendBuff));
-    snprintf(sendBuff, sizeof(sendBuff), format);
-    write(connfd, sendBuff, strlen(sendBuff));
-}
 
 int main(int argc, char **argv) {
 
