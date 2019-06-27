@@ -17,7 +17,9 @@ class Server{
     
     bool run();
     cv::Mat creatDisplacementMap();
-    std::tuple<cv::Mat, cv::Mat> splitImage(cv::Mat inputIMG);
+    cv::Mat creatSkinMask(const cv::Mat& srcImg);
+    std::tuple<cv::Mat, cv::Mat> splitImage(const cv::Mat& inputIMG);
+    cv::Rect computeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher_instance);
     void saveImg(cv::Mat img, std::string filename);
 
   private : 

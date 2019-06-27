@@ -85,78 +85,104 @@ bool Server::run(){
 
 cv::Mat Server::creatDisplacementMap(){
   // Note: currently reading from file
-  cv::Mat testIMG = cv::imread("./test.jpg", 1);
+  cv::Mat testIMG = cv::imread("test3.jpg", 1);
+  std::tuple<cv::Mat, cv::Mat> skinMasks = splitImage(testIMG);
+  cv::Mat skinMask = creatSkinMask(std::get<0>(skinMasks));
+
   if (!testIMG.data) {
     std::cout << "\nError: no source image data.\n" << std::endl;
   }
 
-  cv::cvtColor(testIMG, testIMG, 6);
+  cv::cvtColor(testIMG, testIMG, cv::COLOR_BGR2GRAY);
   std::tuple<cv::Mat, cv::Mat> splitImages = splitImage(testIMG);
   
-  
-  // Downscales the images by 0.5
-  // cv::Size downScale(std::get<0>(splitImages).size().width / 2, std::get<0>(splitImages).size().height / 2);
-  // cv::resize(std::get<0>(splitImages), std::get<0>(splitImages), downScale);
-  // cv::resize(std::get<1>(splitImages), std::get<1>(splitImages), downScale);
-  // std::cout << std::get<0>(splitImages).size().width << "x" << std::get<0>(splitImages).size().height << std::endl;
-  // std::cout << std::get<1>(splitImages).size().width << "x" << std::get<1>(splitImages).size().height << std::endl;
-  
-  
-  // init mats used for calulation
-  cv::Mat disp_left, disp_right, filteredDisp, filter_Disp_vis;
+  cv::Mat disp_left, disp_right, filteredDisp, raw_Disp_vis, filter_Disp_vis;
   cv::Mat left = std::get<0>(splitImages);
   cv::Mat right = std::get<1>(splitImages);
+
+  int window_size = 5;
+  cv::Ptr<cv::StereoSGBM> left_matcher = cv::StereoSGBM::create(0, 16, window_size);
+  left_matcher->setP1(24 * window_size * window_size);
+  left_matcher->setP2(96 * window_size * window_size);
+  left_matcher->setUniquenessRatio(0);
+  left_matcher->setDisp12MaxDiff(1000000);
+  left_matcher->setSpeckleWindowSize(0);
+  left_matcher->setPreFilterCap(63);
+  left_matcher->setMode(cv::StereoSGBM::MODE_HH);
+  cv::Rect ROI = computeROI(left.size(), left_matcher);
+
+  cv::Ptr<cv::ximgproc::DisparityWLSFilter> wls_filter = cv::ximgproc::createDisparityWLSFilterGeneric(left_matcher);
+  wls_filter->setDepthDiscontinuityRadius((int)ceil(0 * window_size));
   
-
-  // computes disparity map left->right & right->left
-  matcher_left->compute(std::get<0>(splitImages), std::get<1>(splitImages), disp_left);
-  matcher_right->compute(std::get<1>(splitImages), std::get<0>(splitImages), disp_right);
-
-
-  // create matchers for filtering methode
-  cv::Ptr<cv::StereoSGBM> matcher_left = cv::StereoSGBM::create(0, 16, 5, 0, 0, 0, 0, 0, 0, 0, cv::StereoSGBM::MODE_HH );
-  cv::Ptr<cv::StereoSGBM> matcher_right = cv::StereoSGBM::create(0, 16, 5, 0, 0, 0, 0, 0, 0, 0, cv::StereoSGBM::MODE_HH );
-  // cv::Ptr<cv::StereoMatcher> matcher_right = cv::ximgproc::createRightMatcher(matcher_left);
+  cv::Ptr<cv::StereoMatcher> right_matcher = cv::ximgproc::createRightMatcher(left_matcher);
+  left_matcher->compute(left, right, disp_left);
+  right_matcher->compute(right, left, disp_right);
   
+  disp_left.convertTo(disp_left, CV_16S);
+  disp_right.convertTo(disp_right, CV_16S);
 
-  // apply filters on computed disparity maps
-  cv::Ptr<cv::ximgproc::DisparityWLSFilter> wls_filter = cv::ximgproc::createDisparityWLSFilter(matcher_left);
   wls_filter->setLambda(8000.0);
-  wls_filter->setSigmaColor(1.5);
-  wls_filter->filter(disp_left, left, filteredDisp, disp_right);
-  cv::ximgproc::getDisparityVis(filteredDisp, filter_Disp_vis, 2);
+  wls_filter->setSigmaColor(1.2);
+  wls_filter->filter(disp_left, std::get<0>(splitImages), filteredDisp, disp_right, ROI, std::get<1>(splitImages));
+  cv::ximgproc::getDisparityVis(filteredDisp, filter_Disp_vis, 2.0f);
 
-
-  // normalize image values and save
   cv::normalize(filter_Disp_vis, filter_Disp_vis, 255, 0, cv::NORM_MINMAX);
-  saveImg(filter_Disp_vis, "disparityMapfiltered.jpg");
-  return testIMG;
+  
+  cv::Mat masked;
+  cv::bitwise_and(filter_Disp_vis, filter_Disp_vis, masked, skinMask);
+
+  saveImg(masked, "disparityMapfiltered.jpg");
+  return masked;
 }
 
-std::tuple<cv::Mat, cv::Mat> Server::splitImage(cv::Mat inputIMG){
+std::tuple<cv::Mat, cv::Mat> Server::splitImage(const cv::Mat& inputIMG){
   /*
    * Note: Currently not entire image is used. 13 pixel rows are left out since
    * the mirror edge crosses all of these (as far as i can tell by using GIMP)
   **/
-  cv::Rect upperRect(0, 0, inputIMG.size().width, 617);
-  cv::Rect lowerRect(0, 630, inputIMG.size().width, inputIMG.size().height - (630 + 33));
-  
-  cv::Mat upperReflection = inputIMG(upperRect);
-  cv::Mat lowerReflection = inputIMG(lowerRect);
+  cv::Mat srcImg = inputIMG.clone();
+  cv::Rect upperRect(0, 0, srcImg.size().width, 617);
+  cv::Rect lowerRect(0, 630, srcImg.size().width, srcImg.size().height - (630 + 33));
+
+  cv::Mat upperReflection = srcImg(upperRect);
+  cv::Mat lowerReflection = srcImg(lowerRect);
   cv::flip(lowerReflection, lowerReflection, 0);
-  saveImg(lowerReflection, "flip.jpg");
 
   transpose(lowerReflection, lowerReflection);
   transpose(upperReflection, upperReflection);
 
   cv::flip(lowerReflection, lowerReflection, 1);
   cv::flip(upperReflection, upperReflection, 1);
-  saveImg(lowerReflection, "flip1.jpg");
-  saveImg(upperReflection, "flip2.jpg");
 
   std::tuple<cv::Mat, cv::Mat> images(lowerReflection, upperReflection);
-
   return images;
+}
+
+cv::Rect Server::computeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher_instance){
+  int min_disparity = matcher_instance->getMinDisparity();
+  int num_disparities = matcher_instance->getNumDisparities();
+  int block_size = matcher_instance->getBlockSize();
+
+  int bs2 = block_size / 2;
+  int minD = min_disparity, maxD = min_disparity + num_disparities - 1;
+
+  int xmin = maxD + bs2;
+  int xmax = src_sz.width + minD - bs2;
+  int ymin = bs2;
+  int ymax = src_sz.height - bs2;
+
+  cv::Rect r(xmin, ymin, xmax - xmin, ymax - ymin);
+  return r;
+}
+
+cv::Mat Server::creatSkinMask(const cv::Mat &srcImg) {
+  cv::Mat skinMask, colrImg;
+  cv::cvtColor(srcImg, colrImg, cv::COLOR_BGR2HSV);
+  cv::inRange(colrImg, cv::Scalar(0, 48, 80), cv::Scalar(20, 255, 255), skinMask);
+  cv::GaussianBlur(skinMask, skinMask, cv::Size2i(3, 3), 0);
+
+  saveImg(skinMask, "skinmask.jpg");
+  return skinMask;
 }
 
 void Server::saveImg(cv::Mat img, std::string filename){
