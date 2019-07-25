@@ -14,7 +14,7 @@ int main(int argc, char **argv) {
     }
 
     Server server(argv[1], argv[2], 1024);
-    server.creatDisplacementMap();
+    server.readVideoImgFromDisk();
     
     if(server.run() == false){
       std::cout << "failed to run server. exiting." << '\n';
