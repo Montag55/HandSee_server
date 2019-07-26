@@ -9,6 +9,7 @@ Server::Server(char* server_ip, char* server_port, int buffer_size):
   m_buffer_size {buffer_size}
   {
     m_buffer.resize(m_buffer_size);
+    m_imgFeatures.sift = cv::xfeatures2d::SIFT::create();
     m_initializationStatus = false;
 
     initializeMatchers();
@@ -123,7 +124,7 @@ cv::Mat Server::creatDisplacementMap(cv::Mat inputImg){
   return masked;
 }
 
-std::tuple<cv::Mat, cv::Mat> Server::splitImage(const cv::Mat& inputIMG, float scale){
+std::tuple<cv::Mat, cv::Mat> Server::splitImage(const cv::Mat& inputIMG){
   /*
    * Note: Currently not entire image is used. 13 pixel rows are left out since
    * the mirror edge crosses all of these (as far as i can tell by using GIMP)
@@ -133,12 +134,12 @@ std::tuple<cv::Mat, cv::Mat> Server::splitImage(const cv::Mat& inputIMG, float s
   cv::Mat srcImg = inputIMG.clone();
 
   /* Scale image */
-  cv::Size downScale(srcImg.size().width * scale, srcImg.size().height * scale);
+  cv::Size downScale(srcImg.size().width * m_imgFeatures.imgScale, srcImg.size().height * m_imgFeatures.imgScale);
   cv::resize(srcImg, srcImg, downScale);
 
   /* Create upper and lower image regions */
-  cv::Rect upperRect(0, 0, srcImg.size().width, 617 * scale);
-  cv::Rect lowerRect(0, 630 * scale, srcImg.size().width, srcImg.size().height - (630 * scale + 33 * scale));
+  cv::Rect upperRect(0, 0, srcImg.size().width, 617 * m_imgFeatures.imgScale);
+  cv::Rect lowerRect(0, 630 * m_imgFeatures.imgScale, srcImg.size().width, srcImg.size().height - (630 * m_imgFeatures.imgScale + 33 * m_imgFeatures.imgScale));
 
   /* Rotate/mirror images so the have same orientation */
   cv::Mat upperReflection = srcImg(upperRect);
@@ -187,21 +188,28 @@ void Server::sendMessage(int connfd, char *format){
   write(connfd, sendBuff, strlen(sendBuff));
 }
 
-void Server::readVideoImgFromDisk(int length, int start){
-  cv::VideoCapture video("./../Video/frame%01d.jpg", cv::CAP_IMAGES);
-  video.set(cv::CAP_PROP_POS_MSEC, start);
+void Server::readVideoImgFromDisk(std::string filePath, int mode, int length, int start){
+  m_video = cv::VideoCapture(filePath, mode);
+  m_video.set(cv::CAP_PROP_POS_MSEC, start);
   cv::Mat tmpImg;
 
+  if (!m_video.isOpened()){
+    std::cout << "Warning: Failed to open video file." <<  std::endl;
+  }
+
   for (unsigned int i = 0; i < length; i++){
-    video.read(tmpImg);
-    
+    m_video.read(tmpImg);
     if(tmpImg.empty()) {
       std::cout << "Warning: read empty frame form video." << std::endl;
+      break;
     }
     else{
+      updateImageFeatures(tmpImg);
       creatDisplacementMap(tmpImg);
     }
   }
+
+  m_video.release();
 }
 
 void Server::initializeMatchers(int window_size, int P1, int P2, int UniqRatio, int maxDiff, int specklSize, int filterCap, int mode){
@@ -239,4 +247,15 @@ void Server::initializeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher
 
   cv::Rect r(xmin, ymin, xmax - xmin, ymax - ymin);
   m_ROI = r;
+}
+
+void Server::updateImageFeatures(cv::Mat img){
+  cv::Mat tmpImg = img.clone();
+  m_imgFeatures.imgScale = 1.0f;
+  
+  cv::cvtColor(tmpImg, tmpImg, cv::COLOR_BGR2GRAY);
+  m_imgFeatures.sift->cv::Feature2D::detect(tmpImg, m_imgFeatures.keyPoints);
+
+  cv::drawKeypoints(tmpImg, m_imgFeatures.keyPoints, tmpImg, cv::Scalar::all(-1), cv::DrawMatchesFlags::DEFAULT);
+  saveImg(tmpImg, "keypoints.jpg");
 }
