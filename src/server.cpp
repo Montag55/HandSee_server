@@ -9,7 +9,6 @@ Server::Server(char* server_ip, char* server_port, int buffer_size):
   m_buffer_size {buffer_size}
   {
     m_buffer.resize(m_buffer_size);
-    m_imgFeatures.sift = cv::xfeatures2d::SIFT::create();
     m_initializationStatus = false;
 
     initializeMatchers();
@@ -87,97 +86,102 @@ bool Server::run(){
   return EXIT_FAILURE;
 }
 
-cv::Mat Server::creatDisplacementMap(cv::Mat inputImg){
+cv::Mat Server::createDisplacementMap(){
 
   /* vars for use */
   cv::Mat disp_left, disp_right, filteredDisp, raw_Disp_vis, filter_Disp_vis;
   
-  /* Create left and right images & create Skinmask for left image */
-  cv::Mat skinMask = creatSkinMask(std::get<0>(splitImage(inputImg)));
-  cv::cvtColor(inputImg, inputImg, cv::COLOR_BGR2GRAY);
-  std::tuple<cv::Mat, cv::Mat> splitImages = splitImage(inputImg);
-  cv::Mat left = std::get<0>(splitImages);
-  cv::Mat right = std::get<1>(splitImages);
-
   /* initiaize RIO if not yet done */
   if (m_initializationStatus == false){
-    initializeROI(left.size(), m_leftMatcher);
+    initializeROI(m_left.size(), m_leftMatcher);
     m_initializationStatus = true;
   }
   
   /* compute left and right disparity matcher */
-  m_leftMatcher->compute(left, right, disp_left);
-  m_rightMatcher->compute(right, left, disp_right);
+  m_leftMatcher->compute(m_left, m_right, disp_left);
+  m_rightMatcher->compute(m_right, m_left, disp_right);
   disp_left.convertTo(disp_left, CV_16S);
   disp_right.convertTo(disp_right, CV_16S);
 
   /* compute disparity map */
-  m_wlsFilter->filter(disp_left, std::get<0>(splitImages), filteredDisp, disp_right, m_ROI, std::get<1>(splitImages));
+  m_wlsFilter->filter(disp_left, m_left, filteredDisp, disp_right, m_ROI, m_right);
   cv::ximgproc::getDisparityVis(filteredDisp, filter_Disp_vis, 2.0f);
 
   /* apply skin mask on disparity map*/
   cv::Mat masked;
-  cv::normalize(filter_Disp_vis, filter_Disp_vis, 255.0f, 0, cv::NORM_MINMAX);
-  cv::bitwise_and(filter_Disp_vis, filter_Disp_vis, masked, skinMask);
-
-  saveImg(masked, "imgDisp.jpg");
+  cv::bitwise_and(filter_Disp_vis, filter_Disp_vis, masked, m_skinMask);
+  cv::normalize(masked, masked, 255.0f, 0, cv::NORM_MINMAX);
+  //cv::absdiff(filter_Disp_vis, cv::Scalar(255, 255, 255), masked);
+  saveImg(filter_Disp_vis, "disparity.jpg");
+  saveImg(masked, "disparityMasked.jpg");
   return masked;
 }
 
-std::tuple<cv::Mat, cv::Mat> Server::splitImage(const cv::Mat& inputIMG){
+void Server::splitImage(const cv::Mat& inputIMG){
   /*
    * Note: Currently not entire image is used. 13 pixel rows are left out since
    * the mirror edge crosses all of these (as far as i can tell by using GIMP)
   **/
 
   /* Clone original image, otherwise overwrite */
-  cv::Mat srcImg = inputIMG.clone();
+  cv::Mat img = inputIMG.clone();
 
   /* Scale image */
-  cv::Size downScale(srcImg.size().width * m_imgFeatures.imgScale, srcImg.size().height * m_imgFeatures.imgScale);
-  cv::resize(srcImg, srcImg, downScale);
+  cv::Size downScale(img.size().width * m_imgFeatures.imgScale, img.size().height * m_imgFeatures.imgScale);
+  cv::resize(img, img, downScale);
 
   /* Create upper and lower image regions */
-  cv::Rect upperRect(0, 0, srcImg.size().width, 617 * m_imgFeatures.imgScale);
-  cv::Rect lowerRect(0, 630 * m_imgFeatures.imgScale, srcImg.size().width, srcImg.size().height - (630 * m_imgFeatures.imgScale + 33 * m_imgFeatures.imgScale));
+  cv::Rect upperRect(0, 0, img.size().width, 617 * m_imgFeatures.imgScale);
+  cv::Rect lowerRect(0, 630 * m_imgFeatures.imgScale, img.size().width, img.size().height - (630 * m_imgFeatures.imgScale + 33 * m_imgFeatures.imgScale));
 
   /* Rotate/mirror images so the have same orientation */
-  cv::Mat upperReflection = srcImg(upperRect);
-  cv::Mat lowerReflection = srcImg(lowerRect);
+  cv::Mat upperReflection = img(upperRect);
+  cv::Mat lowerReflection = img(lowerRect);
   cv::flip(lowerReflection, lowerReflection, 0);
 
   transpose(lowerReflection, lowerReflection);
   transpose(upperReflection, upperReflection);
 
-  cv::flip(lowerReflection, lowerReflection, 1);
-  cv::flip(upperReflection, upperReflection, 1);
-
-  std::tuple<cv::Mat, cv::Mat> images(lowerReflection, upperReflection);
-  return images;
+  m_right = upperReflection;
+  m_left = lowerReflection;
+  
+  // m_left = upperReflection;
+  // m_right = lowerReflection;
 }
 
-cv::Mat Server::creatSkinMask(const cv::Mat &srcImg) {
-  cv::Mat HSVMask, colrImg, nrgb, skinMask, RGBMask;
+void Server::createSkinMask() {
+  /**
+   * Creates a skin mask based on color in RGB and HSV color space.
+   * this is later applied to the created disparity map to crop away
+   * unintressting regions to reduce error.
+   */
 
-  cv::cvtColor(srcImg, colrImg, cv::COLOR_BGR2HSV);
-  cv::inRange(colrImg, cv::Scalar(0, 51, 89), cv::Scalar(25, 174, 255), HSVMask);
+  cv::Mat HSVMask, colrImg, nrgb, RGBMask;
+  cv::Mat srcImg_L = m_left.clone();
+
+  cv::cvtColor(srcImg_L, colrImg, cv::COLOR_BGR2HSV);
+  // cv::inRange(colrImg, cv::Scalar(0, 51, 89), cv::Scalar(25, 174, 255), HSVMask);
+  cv::inRange(colrImg, cv::Scalar(0, 50, 20), cv::Scalar(255, 255, 255), HSVMask);
   cv::GaussianBlur(HSVMask, HSVMask, cv::Size2i(3, 3), 0);
   
-  normalize(srcImg, nrgb, 0, 1.0, cv::NORM_MINMAX);
-  cv::inRange(nrgb, cv::Scalar(0, 0.28, 0.36), cv::Scalar(1.0, 0.363, 0.465), RGBMask);
+  normalize(srcImg_L, nrgb, 0, 1.0, cv::NORM_MINMAX);
+  // cv::inRange(nrgb, cv::Scalar(0, 0.28, 0.36), cv::Scalar(1.0, 0.363, 0.465), RGBMask);
+  cv::inRange(nrgb, cv::Scalar(0, 0, 0), cv::Scalar(0, 0, 0), RGBMask);
   cv::GaussianBlur(RGBMask, RGBMask, cv::Size2i(3, 3), 0);
   bitwise_not(RGBMask, RGBMask);
 
-  skinMask = HSVMask & RGBMask;
-  return skinMask;
+  m_skinMask = HSVMask & RGBMask;
 }
 
 void Server::saveImg(cv::Mat img, std::string filename){
-  if (cv::imwrite(filename, img)){
-    // std::cout << "Saved image to: " << "build/" << filename << std::endl;
-  }
-  else {
+  /**
+   * Simple convinience function. Saves the given input matix as a
+   * picture. Root directory: build/
+   */
+
+  if (!cv::imwrite(filename, img)){
     std::cout << "Error: could not save image to: " << "build/" << filename << "." << std::endl;
+    return;
   }
 }
 
@@ -189,6 +193,14 @@ void Server::sendMessage(int connfd, char *format){
 }
 
 void Server::readVideoImgFromDisk(std::string filePath, int mode, int length, int start){
+  /**
+   * Function that reads all pictures in a directory in order.
+   * Naming convention - frame followed by number. Numbering 
+   * has t start at zero. 
+   * Starting frames and amount of frames (reding length) is
+   * specifiable.
+   */
+
   m_video = cv::VideoCapture(filePath, mode);
   m_video.set(cv::CAP_PROP_POS_MSEC, start);
   cv::Mat tmpImg;
@@ -204,8 +216,19 @@ void Server::readVideoImgFromDisk(std::string filePath, int mode, int length, in
       break;
     }
     else{
-      updateImageFeatures(tmpImg);
-      creatDisplacementMap(tmpImg);
+  
+      splitImage(tmpImg);
+      createSkinMask();  
+      cv::cvtColor(tmpImg, tmpImg, cv::COLOR_BGR2GRAY);
+      splitImage(tmpImg);
+
+      if(i == 0) {
+        updateImageFeatures();
+      }
+
+      rectification();
+      cv::Mat result = createDisplacementMap();
+  
     }
   }
 
@@ -233,6 +256,13 @@ void Server::initializeWLSFilter(int window_size, double lambda, double sigmeCol
 }
 
 void Server::initializeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher_instance){
+  /**
+   * Initializes region of intrest (ROI) derived from the matcher instance.
+   * This ROI, after initialization, is then used for further disparity map
+   * creation. This however is OPTIONAL. Disparity map can also be comuted 
+   * without a ROI.
+   */
+
   int min_disparity = matcher_instance->getMinDisparity();
   int num_disparities = matcher_instance->getNumDisparities();
   int block_size = matcher_instance->getBlockSize();
@@ -249,13 +279,94 @@ void Server::initializeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher
   m_ROI = r;
 }
 
-void Server::updateImageFeatures(cv::Mat img){
-  cv::Mat tmpImg = img.clone();
-  m_imgFeatures.imgScale = 1.0f;
-  
-  cv::cvtColor(tmpImg, tmpImg, cv::COLOR_BGR2GRAY);
-  m_imgFeatures.sift->cv::Feature2D::detect(tmpImg, m_imgFeatures.keyPoints);
+void Server::updateImageFeatures(){
+  /**
+   * https://stackoverflow.com/questions/45855725/does-the-stereobm-class-in-opencv-do-rectification-of-the-input-images-or-frames
+   * This method is supposed to be called every once in a while to
+   * the update homography matrix m_H1 m_H2 and fundamental matrix F for 
+   * rectification. The Sift algorithm along with closest point matching 
+   * is used to detect corresponding points in the images.
+   */
 
-  cv::drawKeypoints(tmpImg, m_imgFeatures.keyPoints, tmpImg, cv::Scalar::all(-1), cv::DrawMatchesFlags::DEFAULT);
-  saveImg(tmpImg, "keypoints.jpg");
+  cv::Mat left = m_left.clone();
+  cv::Mat right = m_right.clone();
+  
+  double max_dist = 0;
+  double min_dist = 100;
+  cv::Ptr<cv::Feature2D> f2d = cv::xfeatures2d::SIFT::create();
+  std::vector<cv::KeyPoint> keypoints_1, keypoints_2;
+  cv::Ptr<cv::Feature2D> fd = cv::xfeatures2d::SIFT::create();
+  cv::Mat descriptors_1, descriptors_2;
+  cv::BFMatcher matcher(cv::NORM_L2, true);
+  std::vector<cv::DMatch> matches;
+  std::vector<cv::DMatch> good_matches;
+  std::vector<cv::Point2f> imgpts1, imgpts2;
+  std::vector<uchar> status;
+
+  f2d->detect(left, keypoints_1);
+  f2d->detect(right, keypoints_2);
+
+  fd->compute(left, keypoints_1, descriptors_1);
+  fd->compute(right, keypoints_2, descriptors_2);
+
+  matcher.match(descriptors_1, descriptors_2, matches);
+
+  for (int i = 0; i < matches.size(); i++) {
+    double dist = matches[i].distance;
+    if (dist < min_dist) min_dist = dist;
+    if (dist > max_dist) max_dist = dist;
+  }
+
+  for (int i = 0; i < matches.size(); i++) {
+    if (matches[i].distance <= std::max(4.5 * min_dist, 0.02)) {
+      good_matches.push_back(matches[i]);
+      imgpts1.push_back(keypoints_1[matches[i].queryIdx].pt);
+      imgpts2.push_back(keypoints_2[matches[i].trainIdx].pt);
+    }
+  }
+
+  m_imgFeatures.m_F = findFundamentalMat(imgpts1, imgpts2, cv::FM_RANSAC, 3.0, 0.99, status);
+  cv::stereoRectifyUncalibrated(imgpts1, imgpts1, m_imgFeatures.m_F, left.size(), m_imgFeatures.m_H1, m_imgFeatures.m_H2);
+}
+
+void Server::rectification(){
+  /**
+   * https://stackoverflow.com/questions/45855725/does-the-stereobm-class-in-opencv-do-rectification-of-the-input-images-or-frames
+   * Rectification of images to come as close as possible to stereo normal case
+   */
+
+  cv::Mat left = m_left.clone();
+  cv::Mat right = m_right.clone();
+  cv::Mat skinMask = m_skinMask.clone();
+
+  cv::Mat rectified1(left.size(), left.type());
+  cv::warpPerspective(left, rectified1, m_imgFeatures.m_H1, left.size());
+
+  cv::Mat rectified2(right.size(), right.type());
+  cv::warpPerspective(right, rectified2, m_imgFeatures.m_H2, right.size());
+
+  cv::Mat rectified3(skinMask.size(), skinMask.type());
+  cv::warpPerspective(skinMask, rectified3, m_imgFeatures.m_H1, skinMask.size());
+
+
+  m_left = rectified1;
+  m_right = rectified2;
+  m_skinMask = rectified3;
+
+  saveImg(rectified1, "rectified1.jpg");
+  saveImg(rectified2, "rectified2.jpg");
+  saveImg(rectified3, "rectified3.jpg");
+}
+
+cv::Point Server::retrieveOriginalImgPointPos(cv::Point warpedPoint){
+  cv::Mat img = m_left.clone();
+  cv::circle(img, cv::Point((int)(img.cols / 2), (int)(img.rows / 2)), 1, cv::Scalar(0, 0, 255), 10);
+  saveImg(img, "test.jpg");
+  cv::Mat test_rect(img.size(), img.type());
+  cv::warpPerspective(img, test_rect, m_imgFeatures.m_H1, img.size());
+  saveImg(test_rect, "test_rect.jpg");
+  cv::warpPerspective(test_rect, test_rect, m_imgFeatures.m_H1.inv(), test_rect.size());
+  saveImg(test_rect, "test_rect_inv.jpg");
+
+  return cv::Point(-1, -1);
 }
