@@ -10,7 +10,10 @@ struct ImgFeatures {
     cv::Mat m_H1;
     cv::Mat m_H2;
     cv::Mat m_F;
+    cv::Scalar minRGB = cv::Scalar(-1, -1, -1);
+    cv::Scalar maxRGB = cv::Scalar(-1, -1, -1);
+    cv::Scalar minHSV = cv::Scalar(-1, -1, -1);
+    cv::Scalar maxHSV = cv::Scalar(-1, -1, -1);
 };
-
 
 #endif

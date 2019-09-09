@@ -30,6 +30,7 @@ class Server{
     void updateImageFeatures();
     void rectification();
     cv::Point retrieveOriginalImgPointPos(cv::Point warpedPoint);
+    void calibrateColor();
 
   private : 
     char *m_server_ip;

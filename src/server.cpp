@@ -141,6 +141,9 @@ void Server::splitImage(const cv::Mat& inputIMG){
 
   transpose(lowerReflection, lowerReflection);
   transpose(upperReflection, upperReflection);
+  
+  // cv::flip(lowerReflection, lowerReflection, 1);
+  // cv::flip(upperReflection, upperReflection, 1);
 
   m_right = upperReflection;
   m_left = lowerReflection;
@@ -162,11 +165,12 @@ void Server::createSkinMask() {
   cv::cvtColor(srcImg_L, colrImg, cv::COLOR_BGR2HSV);
   // cv::inRange(colrImg, cv::Scalar(0, 51, 89), cv::Scalar(25, 174, 255), HSVMask);
   cv::inRange(colrImg, cv::Scalar(0, 50, 20), cv::Scalar(255, 255, 255), HSVMask);
+  // cv::inRange(colrImg, m_imgFeatures.minHSV, m_imgFeatures.maxHSV, HSVMask);
   cv::GaussianBlur(HSVMask, HSVMask, cv::Size2i(3, 3), 0);
   
   normalize(srcImg_L, nrgb, 0, 1.0, cv::NORM_MINMAX);
-  // cv::inRange(nrgb, cv::Scalar(0, 0.28, 0.36), cv::Scalar(1.0, 0.363, 0.465), RGBMask);
-  cv::inRange(nrgb, cv::Scalar(0, 0, 0), cv::Scalar(0, 0, 0), RGBMask);
+  cv::inRange(nrgb, cv::Scalar(0, 0.28, 0.36), cv::Scalar(1.0, 0.363, 0.465), RGBMask);
+  // cv::inRange(nrgb, m_imgFeatures.minRGB, m_imgFeatures.maxRGB, RGBMask);
   cv::GaussianBlur(RGBMask, RGBMask, cv::Size2i(3, 3), 0);
   bitwise_not(RGBMask, RGBMask);
 
@@ -218,13 +222,15 @@ void Server::readVideoImgFromDisk(std::string filePath, int mode, int length, in
     else{
   
       splitImage(tmpImg);
+      
+      if(i == 0) {
+        calibrateColor();
+        updateImageFeatures();
+      }
+
       createSkinMask();  
       cv::cvtColor(tmpImg, tmpImg, cv::COLOR_BGR2GRAY);
       splitImage(tmpImg);
-
-      if(i == 0) {
-        updateImageFeatures();
-      }
 
       rectification();
       cv::Mat result = createDisplacementMap();
@@ -333,6 +339,7 @@ void Server::rectification(){
   /**
    * https://stackoverflow.com/questions/45855725/does-the-stereobm-class-in-opencv-do-rectification-of-the-input-images-or-frames
    * Rectification of images to come as close as possible to stereo normal case
+   * https://books.google.de/books?id=seAgiOfu2EIC&lpg=PA415&ots=hUJ79hbCRc&dq=opencv%20rectification%20different%20orientation&hl=de&pg=PA415#v=onepage&q=opencv%20rectification%20different%20orientation&f=false
    */
 
   cv::Mat left = m_left.clone();
@@ -361,12 +368,46 @@ void Server::rectification(){
 cv::Point Server::retrieveOriginalImgPointPos(cv::Point warpedPoint){
   cv::Mat img = m_left.clone();
   cv::circle(img, cv::Point((int)(img.cols / 2), (int)(img.rows / 2)), 1, cv::Scalar(0, 0, 255), 10);
-  saveImg(img, "test.jpg");
   cv::Mat test_rect(img.size(), img.type());
   cv::warpPerspective(img, test_rect, m_imgFeatures.m_H1, img.size());
-  saveImg(test_rect, "test_rect.jpg");
   cv::warpPerspective(test_rect, test_rect, m_imgFeatures.m_H1.inv(), test_rect.size());
-  saveImg(test_rect, "test_rect_inv.jpg");
 
   return cv::Point(-1, -1);
+}
+
+void Server::calibrateColor(){
+  
+  int stepSize = 4;
+  int rad = 20;
+  cv::Mat mask = cv::Mat::zeros(m_left.size(), m_left.type());
+
+  int x_step = mask.cols / stepSize;
+  int y_step = mask.rows / stepSize;
+
+  for (int i = y_step; i < mask.rows - (y_step - 1); i += y_step) {
+    for (int j = x_step; j < mask.cols - (x_step - 1); j += x_step) {
+
+      cv::Point center(j, i);
+      cv::circle(mask, center, rad, cv::Scalar(255, 255, 255), -1, 8, 0);
+    }
+  }
+
+  cv::Mat hsv = m_left.clone() & mask;
+  cv::Mat rgb = m_left.clone() & mask;
+  cv::cvtColor(hsv, hsv, cv::COLOR_BGR2HSV);
+
+  cv::Mat rgbChannels [3];
+  cv::split(rgb, rgbChannels);
+  cv::Mat hsvChannels [3];
+  cv::split(hsv, hsvChannels);
+
+  cv::minMaxLoc(rgbChannels[0], &m_imgFeatures.minRGB[0], &m_imgFeatures.maxRGB[0]);
+  cv::minMaxLoc(rgbChannels[1], &m_imgFeatures.minRGB[1], &m_imgFeatures.maxRGB[1]);
+  cv::minMaxLoc(rgbChannels[2], &m_imgFeatures.minRGB[2], &m_imgFeatures.maxRGB[2]);
+  cv::normalize(m_imgFeatures.minRGB, m_imgFeatures.minRGB);
+  cv::normalize(m_imgFeatures.maxRGB, m_imgFeatures.maxRGB);
+
+  cv::minMaxLoc(hsvChannels[0], &m_imgFeatures.minHSV[0], &m_imgFeatures.maxHSV[0]);
+  cv::minMaxLoc(hsvChannels[1], &m_imgFeatures.minHSV[1], &m_imgFeatures.maxHSV[1]);
+  cv::minMaxLoc(hsvChannels[2], &m_imgFeatures.minHSV[2], &m_imgFeatures.maxHSV[2]); 
 }
