@@ -32,6 +32,7 @@ class Server{
     void initializeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher_instance);
     void updateImageFeatures();
     void rectification();
+    int readStream();
     cv::Point retrieveOriginalImgPointPos(cv::Point warpedPoint);
     void calibrateColor();
     void getContours();

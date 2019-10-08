@@ -113,8 +113,8 @@ cv::Mat Server::createDisplacementMap(){
   cv::bitwise_and(filter_Disp_vis, filter_Disp_vis, masked, m_skinMask);
   cv::normalize(masked, masked, 255.0f, 0, cv::NORM_MINMAX);
   //cv::absdiff(filter_Disp_vis, cv::Scalar(255, 255, 255), masked);
-  saveImg(filter_Disp_vis, "disparity.jpg");
-  saveImg(masked, "disparityMasked.jpg");
+  // saveImg(filter_Disp_vis, "disparity.jpg");
+  // saveImg(masked, "disparityMasked.jpg");
   return masked;
 }
 
@@ -132,8 +132,10 @@ void Server::splitImage(){
   cv::resize(img, img, downScale);
 
   /* Create upper and lower image regions */
-  cv::Rect upperRect(0, 0, img.size().width, 617 * m_imgFeatures.imgScale);
-  cv::Rect lowerRect(0, 630 * m_imgFeatures.imgScale, img.size().width, img.size().height - (630 * m_imgFeatures.imgScale + 33 * m_imgFeatures.imgScale));
+  // cv::Rect upperRect(0, 0, img.size().width, 617 * m_imgFeatures.imgScale);
+  // cv::Rect lowerRect(0, 630 * m_imgFeatures.imgScale, img.size().width, img.size().height - (630 * m_imgFeatures.imgScale + 33 * m_imgFeatures.imgScale));
+  cv::Rect upperRect(0, 0, img.size().width, 309 * m_imgFeatures.imgScale);
+  cv::Rect lowerRect(0, 315 * m_imgFeatures.imgScale, img.size().width, img.size().height - (315 * m_imgFeatures.imgScale + 16 * m_imgFeatures.imgScale));
 
   /* Rotate/mirror images so the have same orientation */
   cv::Mat upperReflection = img(upperRect);
@@ -146,7 +148,7 @@ void Server::splitImage(){
   cv::flip(lowerReflection, lowerReflection, 1);
   cv::flip(upperReflection, upperReflection, 1);
 
-  if(m_leftRightSwitch == 0){
+  if(m_leftRightSwitch == 1){
     m_right = upperReflection;
     m_left = lowerReflection;
   } 
@@ -185,7 +187,7 @@ void Server::createSkinMask() {
 
 
   m_skinMask = HSVMask;
-  saveImg(m_skinMask, "skinMask.jpg");
+  // saveImg(m_skinMask, "skinMask.jpg");
 }
 
 void Server::saveImg(cv::Mat img, std::string filename){
@@ -309,7 +311,7 @@ void Server::updateImageFeatures(){
 
   cv::Mat left = m_left.clone();
   cv::Mat right = m_right.clone();
-  
+  std::cout << "Check" << std::endl;
   double max_dist = 0;
   double min_dist = 100;
   cv::Ptr<cv::Feature2D> f2d = cv::xfeatures2d::SIFT::create();
@@ -347,13 +349,13 @@ void Server::updateImageFeatures(){
   m_imgFeatures.m_F = findFundamentalMat(imgpts1, imgpts2, cv::FM_RANSAC, 3.0, 0.99, status);
   cv::stereoRectifyUncalibrated(imgpts1, imgpts1, m_imgFeatures.m_F, left.size(), m_imgFeatures.m_H1, m_imgFeatures.m_H2);
 
-  if (m_imgFeatures.m_H1.at<double>(0, 2) * m_imgFeatures.m_H1.at<double>(1, 2) > 0 ||
-      m_imgFeatures.m_H2.at<double>(0, 2) * m_imgFeatures.m_H2.at<double>(1, 2) > 0) {
+  // if (m_imgFeatures.m_H1.at<double>(0, 2) * m_imgFeatures.m_H1.at<double>(1, 2) > 0 ||
+  //     m_imgFeatures.m_H2.at<double>(0, 2) * m_imgFeatures.m_H2.at<double>(1, 2) > 0) {
 
-    m_leftRightSwitch = (m_leftRightSwitch + 1) % 2;
-    splitImage();
-    updateImageFeatures();
-  }
+  //   m_leftRightSwitch = (m_leftRightSwitch + 1) % 2;
+  //   splitImage();
+  //   updateImageFeatures();
+  // }
 }
 
 void Server::rectification(){
@@ -380,9 +382,9 @@ void Server::rectification(){
   m_right = rectified2;
   m_skinMask = rectified3;
 
-  saveImg(rectified1, "rectified1.jpg");
-  saveImg(rectified2, "rectified2.jpg");
-  saveImg(rectified3, "rectified3.jpg");
+  // saveImg(rectified1, "rectified1.jpg");
+  // saveImg(rectified2, "rectified2.jpg");
+  // saveImg(rectified3, "rectified3.jpg");
 }
 
 cv::Point Server::retrieveOriginalImgPointPos(cv::Point warpedPoint){
@@ -441,7 +443,7 @@ void Server::getContours(){
   double thresh = 100;
   cv::Canny(src_gray, canny_output, thresh, thresh * 2, 3, true);
   cv::findContours(canny_output, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
-  saveImg(canny_output, "edges.jpg");
+  // saveImg(canny_output, "edges.jpg");
   
   float maxArea = 0;
   int maxIdx = 0;
@@ -459,13 +461,15 @@ void Server::getContours(){
   std::vector<int> hull;
   std::vector<cv::Vec4i> hullDefects;
   cv::Mat tmp = m_left.clone();
-  cv::convexHull( cv::Mat(contours[maxIdx]), hull, false, false);
-
-  if(hull.size() > 3){
-    cv::drawContours(tmp, contours, maxIdx, cv::Scalar(255, 255, 255), 10);
-    cv::convexityDefects(cv::Mat(contours[maxIdx]), cv::Mat(hull), hullDefects);
-    std::cout << findHand(contours[maxIdx], hull, hullDefects, tmp) << std::endl;
+  if (contours.size() > 0){
+    cv::convexHull( cv::Mat(contours[maxIdx]), hull, false, false);
+    if(hull.size() > 3){
+      cv::drawContours(tmp, contours, maxIdx, cv::Scalar(255, 255, 255), 10);
+      cv::convexityDefects(cv::Mat(contours[maxIdx]), cv::Mat(hull), hullDefects);
+      std::cout << findHand(contours[maxIdx], hull, hullDefects, tmp) << std::endl;
+    }
   }
+ 
 }
 
 int Server::findHand(std::vector<cv::Point> contour, std::vector<int> hull, std::vector<cv::Vec4i> hullDefects, cv::Mat tmp){
@@ -494,7 +498,7 @@ int Server::findHand(std::vector<cv::Point> contour, std::vector<int> hull, std:
     }
   }
   cv::circle(tmp2, mc, 8, cv::Scalar(0, 0, 255), 8);
-  saveImg(tmp2, "tmp.jpg");
+  //saveImg(tmp2, "tmp.jpg");
   return cnt;
 }
 
@@ -506,3 +510,45 @@ float Server::calcAngle(cv::Point f, cv::Point s, cv::Point e){
   return angle;
 }
 
+
+int Server::readStream(){
+    cv::VideoCapture vcap;
+    cv::Mat image;
+    bool begin = true;
+
+    const std::string videoStreamAddress = "rtmp://192.168.2.119/app/live"; 
+
+    //open the video stream and make sure it's opened
+    if(!vcap.open(videoStreamAddress)) {
+        std::cout << "Error opening video stream or file" << std::endl;
+        return -1;
+    }
+    std::cout << "Check1" << std::endl;
+    cv::namedWindow("Output Window");
+    std::cout << "Check2" << std::endl;
+    for(;;) {
+        if(!vcap.read(m_srcImg)) {
+            std::cout << "No frame" << std::endl;
+            cv::waitKey();
+        }
+        //m_srcImg = cv::resize(m_srcImg, 50);
+        splitImage();
+        if(begin){
+          std::cout << "Check3" << std::endl;
+          updateImageFeatures();
+          begin = false;
+          std::cout << "Check4" << std::endl;
+        }
+
+        createSkinMask();
+        getContours();
+        cv::cvtColor(m_srcImg, m_srcImg, cv::COLOR_BGR2GRAY);
+        splitImage();
+
+        rectification();
+        cv::Mat result = createDisplacementMap();
+
+        cv::imshow("Output Window", result);
+        if(cv::waitKey(1) >= 0) break;
+    }   
+}

@@ -14,8 +14,8 @@ int main(int argc, char **argv) {
     }
 
     Server server(argv[1], argv[2], 1024);
-    server.readVideoImgFromDisk();
-    
+    //server.readVideoImgFromDisk();
+    server.readStream();
     if(server.run() == false){
       std::cout << "failed to run server. exiting." << '\n';
     }
