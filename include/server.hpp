@@ -32,7 +32,7 @@ class Server{
     void initializeROI(cv::Size2i src_sz, cv::Ptr<cv::StereoMatcher> matcher_instance);
     void updateImageFeatures();
     void rectification();
-    cv::Point retrieveOriginalImgPointPos(cv::Point warpedPoint);
+    std::vector<cv::Scalar> retrieveAvgDisplacement(cv::Mat disMap);
     void calibrateColor();
     void getContours();
     int findHand(std::vector<cv::Point> contour, std::vector<int> hull, std::vector<cv::Vec4i> hullDefects, cv::Mat tmp);
@@ -48,10 +48,12 @@ class Server{
 
     bool m_initializationStatus;
     std::vector<char> m_buffer;
+    std::vector<cv::Point> m_fingers;
     cv::Ptr<cv::StereoSGBM> m_leftMatcher;
     cv::Ptr<cv::StereoMatcher> m_rightMatcher;
     cv::Ptr<cv::ximgproc::DisparityWLSFilter> m_wlsFilter;
     cv::Rect m_ROI;
+    cv::Point m_centroid;
     cv::VideoCapture m_video;
     ImgFeatures m_imgFeatures;
 

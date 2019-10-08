@@ -247,7 +247,13 @@ void Server::readVideoImgFromDisk(std::string filePath, int mode, int length, in
 
       rectification();
       cv::Mat result = createDisplacementMap();
-  
+      std::vector<cv::Scalar> tmp = retrieveAvgDisplacement(result);
+      
+      for(int j = 0; j < tmp.size(); ++j){
+        std::cout << tmp[j] << std::endl;
+      }
+      
+      m_fingers.clear();
     }
   }
 
@@ -385,14 +391,28 @@ void Server::rectification(){
   saveImg(rectified3, "rectified3.jpg");
 }
 
-cv::Point Server::retrieveOriginalImgPointPos(cv::Point warpedPoint){
-  cv::Mat img = m_left.clone();
-  cv::circle(img, cv::Point((int)(img.cols / 2), (int)(img.rows / 2)), 1, cv::Scalar(0, 0, 255), 10);
-  cv::Mat test_rect(img.size(), img.type());
-  cv::warpPerspective(img, test_rect, m_imgFeatures.m_H1, img.size());
-  cv::warpPerspective(test_rect, test_rect, m_imgFeatures.m_H1.inv(), test_rect.size());
+std::vector<cv::Scalar> Server::retrieveAvgDisplacement(cv::Mat disMap){
+  float dist = 0.02f;
+  std::vector<cv::Scalar> depthAvgs;
+  cv::Mat maskTotal = cv::Mat::zeros(m_left.size(), m_left.type());
 
-  return cv::Point(-1, -1);
+  for(int i = 0; i < m_fingers.size(); i++){
+    cv::Mat mask = cv::Mat::zeros(m_left.size(), m_left.type());
+
+    cv::Point dir = cv::Point(m_centroid.x - m_fingers[i].x, m_centroid.y - m_fingers[i].y);
+    cv::Point movedPoint = m_fingers[i] + dir * dist;
+
+    cv::circle(mask, movedPoint, 2, cv::Scalar(255, 255, 255), 2);
+    cv::circle(maskTotal, movedPoint, 2, cv::Scalar(255, 255, 255), 2);
+    cv::warpPerspective(mask, mask, m_imgFeatures.m_H1, mask.size());
+    depthAvgs.push_back(cv::mean(disMap, mask));
+  }
+
+
+  cv::warpPerspective(maskTotal, maskTotal, m_imgFeatures.m_H1, maskTotal.size());
+  //saveImg(maskTotal + m_left, "point.jpg");
+
+  return depthAvgs;
 }
 
 void Server::calibrateColor(){
@@ -433,7 +453,6 @@ void Server::calibrateColor(){
 void Server::getContours(){
 
   cv::Mat src_gray = m_skinMask.clone();
-  //cv::Mat src_gray = cv::imread("/home/lucas/Pictures/handMask.png", 1);
   
   std::vector < std::vector<cv::Point> > contours;
   std::vector<cv::Vec4i> hierarchy;
@@ -449,7 +468,6 @@ void Server::getContours(){
   for(unsigned int i = 0; i < contours.size(); i++){
     std::vector<cv::Point> cnt = contours[i];
     float area = cv::contourArea(cnt);
-    // std::cout << area << std::endl;
     if(area > maxArea){
       maxArea = area;
       maxIdx = i;
@@ -471,7 +489,7 @@ void Server::getContours(){
 int Server::findHand(std::vector<cv::Point> contour, std::vector<int> hull, std::vector<cv::Vec4i> hullDefects, cv::Mat tmp){
 
   cv::Moments M = cv::moments(contour);
-  cv::Point2f mc = cv::Point2f( M.m10/M.m00 , M.m01/M.m00 );
+  m_centroid = cv::Point2f( M.m10/M.m00 , M.m01/M.m00 );
   cv::Mat tmp2 = tmp.clone();
 
   int cnt = 0;
@@ -488,12 +506,13 @@ int Server::findHand(std::vector<cv::Point> contour, std::vector<int> hull, std:
 
     if(d > 1000 && angle <= CV_PI / 2){
       cnt += 1;
+      m_fingers.push_back(start);
       cv::circle(tmp2, start, 8, cv::Scalar(255, 0, 0));
-      cv::circle(tmp2, end, 8, cv::Scalar(0, 255, 0));
-      cv::circle(tmp2, far, 8, cv::Scalar(0, 0, 255));
+      //cv::circle(tmp2, end, 8, cv::Scalar(0, 255, 0));
+      // cv::circle(tmp2, far, 8, cv::Scalar(0, 0, 255));
     }
   }
-  cv::circle(tmp2, mc, 8, cv::Scalar(0, 0, 255), 8);
+  cv::circle(tmp2, m_centroid, 8, cv::Scalar(0, 0, 255), 8);
   saveImg(tmp2, "tmp.jpg");
   return cnt;
 }
