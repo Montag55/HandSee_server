@@ -10,6 +10,7 @@ Server::Server(char* server_ip, char* server_port, int buffer_size):
   {
     m_buffer.resize(m_buffer_size);
     m_initializationStatus = false;
+    m_leftRightSwitch = 0;
 
     initializeMatchers();
     initializeWLSFilter();
@@ -117,14 +118,14 @@ cv::Mat Server::createDisplacementMap(){
   return masked;
 }
 
-void Server::splitImage(const cv::Mat& inputIMG){
+void Server::splitImage(){
   /*
    * Note: Currently not entire image is used. 13 pixel rows are left out since
    * the mirror edge crosses all of these (as far as i can tell by using GIMP)
   **/
 
   /* Clone original image, otherwise overwrite */
-  cv::Mat img = inputIMG.clone();
+  cv::Mat img = m_srcImg.clone();
 
   /* Scale image */
   cv::Size downScale(img.size().width * m_imgFeatures.imgScale, img.size().height * m_imgFeatures.imgScale);
@@ -142,14 +143,17 @@ void Server::splitImage(const cv::Mat& inputIMG){
   transpose(lowerReflection, lowerReflection);
   transpose(upperReflection, upperReflection);
   
-  // cv::flip(lowerReflection, lowerReflection, 1);
-  // cv::flip(upperReflection, upperReflection, 1);
+  cv::flip(lowerReflection, lowerReflection, 1);
+  cv::flip(upperReflection, upperReflection, 1);
 
-  m_right = upperReflection;
-  m_left = lowerReflection;
-  
-  // m_left = upperReflection;
-  // m_right = lowerReflection;
+  if(m_leftRightSwitch == 0){
+    m_right = upperReflection;
+    m_left = lowerReflection;
+  } 
+  else{
+    m_left = upperReflection;
+    m_right = lowerReflection;
+  }
 }
 
 void Server::createSkinMask() {
@@ -159,22 +163,29 @@ void Server::createSkinMask() {
    * unintressting regions to reduce error.
    */
 
-  cv::Mat HSVMask, colrImg, nrgb, RGBMask;
+  cv::Mat HSVMask, colrImg;
   cv::Mat srcImg_L = m_left.clone();
 
   cv::cvtColor(srcImg_L, colrImg, cv::COLOR_BGR2HSV);
-  // cv::inRange(colrImg, cv::Scalar(0, 51, 89), cv::Scalar(25, 174, 255), HSVMask);
-  cv::inRange(colrImg, cv::Scalar(0, 50, 20), cv::Scalar(255, 255, 255), HSVMask);
-  // cv::inRange(colrImg, m_imgFeatures.minHSV, m_imgFeatures.maxHSV, HSVMask);
+  cv::inRange(colrImg, cv::Scalar(0, 48, 80), cv::Scalar(20, 255, 255), HSVMask);
+  //cv::inRange(colrImg, m_imgFeatures.minHSV, m_imgFeatures.maxHSV, HSVMask);
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size2i(11, 11));
+	cv::erode(HSVMask, HSVMask, kernel, cv::Point(-1, -1), 2);
+  cv::dilate(HSVMask, HSVMask, kernel, cv::Point(-1, -1), 2);
   cv::GaussianBlur(HSVMask, HSVMask, cv::Size2i(3, 3), 0);
-  
-  normalize(srcImg_L, nrgb, 0, 1.0, cv::NORM_MINMAX);
-  cv::inRange(nrgb, cv::Scalar(0, 0.28, 0.36), cv::Scalar(1.0, 0.363, 0.465), RGBMask);
-  // cv::inRange(nrgb, m_imgFeatures.minRGB, m_imgFeatures.maxRGB, RGBMask);
-  cv::GaussianBlur(RGBMask, RGBMask, cv::Size2i(3, 3), 0);
-  bitwise_not(RGBMask, RGBMask);
 
-  m_skinMask = HSVMask & RGBMask;
+  // cv::rectangle(HSVMask, cv::Point(0, 0), cv::Point(HSVMask.cols - 1, HSVMask.rows - 1), cv::Scalar(255, 255, 255));
+  for(int j = 0; j < HSVMask.rows; j++){
+    uchar* current  = HSVMask.ptr<uchar>(j);
+    for(int i = 0; i < HSVMask.cols; i += HSVMask.cols - 1){
+        current[i] = 1;
+        // std::cout << "j: " << j << "; i: " << i << std::endl;
+    }
+  }
+
+
+  m_skinMask = HSVMask;
+  saveImg(m_skinMask, "skinMask.jpg");
 }
 
 void Server::saveImg(cv::Mat img, std::string filename){
@@ -207,30 +218,32 @@ void Server::readVideoImgFromDisk(std::string filePath, int mode, int length, in
 
   m_video = cv::VideoCapture(filePath, mode);
   m_video.set(cv::CAP_PROP_POS_MSEC, start);
-  cv::Mat tmpImg;
 
   if (!m_video.isOpened()){
     std::cout << "Warning: Failed to open video file." <<  std::endl;
   }
 
   for (unsigned int i = 0; i < length; i++){
-    m_video.read(tmpImg);
-    if(tmpImg.empty()) {
+    m_video.read(m_srcImg);
+    if(m_srcImg.empty()) {
       std::cout << "Warning: read empty frame form video." << std::endl;
       break;
     }
     else{
   
-      splitImage(tmpImg);
+      splitImage();
       
       if(i == 0) {
-        calibrateColor();
+        // calibrateColor();
+        // std::cout << m_imgFeatures.minRGB << std::endl;
+        // std::cout << m_imgFeatures.maxRGB << std::endl;
         updateImageFeatures();
       }
 
-      createSkinMask();  
-      cv::cvtColor(tmpImg, tmpImg, cv::COLOR_BGR2GRAY);
-      splitImage(tmpImg);
+      createSkinMask();
+      getContours();
+      cv::cvtColor(m_srcImg, m_srcImg, cv::COLOR_BGR2GRAY);
+      splitImage();
 
       rectification();
       cv::Mat result = createDisplacementMap();
@@ -330,9 +343,17 @@ void Server::updateImageFeatures(){
       imgpts2.push_back(keypoints_2[matches[i].trainIdx].pt);
     }
   }
-
+ 
   m_imgFeatures.m_F = findFundamentalMat(imgpts1, imgpts2, cv::FM_RANSAC, 3.0, 0.99, status);
   cv::stereoRectifyUncalibrated(imgpts1, imgpts1, m_imgFeatures.m_F, left.size(), m_imgFeatures.m_H1, m_imgFeatures.m_H2);
+
+  if (m_imgFeatures.m_H1.at<double>(0, 2) * m_imgFeatures.m_H1.at<double>(1, 2) > 0 ||
+      m_imgFeatures.m_H2.at<double>(0, 2) * m_imgFeatures.m_H2.at<double>(1, 2) > 0) {
+
+    m_leftRightSwitch = (m_leftRightSwitch + 1) % 2;
+    splitImage();
+    updateImageFeatures();
+  }
 }
 
 void Server::rectification(){
@@ -354,7 +375,6 @@ void Server::rectification(){
 
   cv::Mat rectified3(skinMask.size(), skinMask.type());
   cv::warpPerspective(skinMask, rectified3, m_imgFeatures.m_H1, skinMask.size());
-
 
   m_left = rectified1;
   m_right = rectified2;
@@ -386,9 +406,7 @@ void Server::calibrateColor(){
 
   for (int i = y_step; i < mask.rows - (y_step - 1); i += y_step) {
     for (int j = x_step; j < mask.cols - (x_step - 1); j += x_step) {
-
-      cv::Point center(j, i);
-      cv::circle(mask, center, rad, cv::Scalar(255, 255, 255), -1, 8, 0);
+      cv::circle(mask, cv::Point(j, i), rad, cv::Scalar(255, 255, 255), -1, 8, 0);
     }
   }
 
@@ -400,14 +418,91 @@ void Server::calibrateColor(){
   cv::split(rgb, rgbChannels);
   cv::Mat hsvChannels [3];
   cv::split(hsv, hsvChannels);
+  cv::Mat maskArr[3];
+  cv::split(mask, maskArr);
 
-  cv::minMaxLoc(rgbChannels[0], &m_imgFeatures.minRGB[0], &m_imgFeatures.maxRGB[0]);
-  cv::minMaxLoc(rgbChannels[1], &m_imgFeatures.minRGB[1], &m_imgFeatures.maxRGB[1]);
-  cv::minMaxLoc(rgbChannels[2], &m_imgFeatures.minRGB[2], &m_imgFeatures.maxRGB[2]);
-  cv::normalize(m_imgFeatures.minRGB, m_imgFeatures.minRGB);
-  cv::normalize(m_imgFeatures.maxRGB, m_imgFeatures.maxRGB);
+  cv::minMaxLoc(rgbChannels[0], &m_imgFeatures.minRGB[0], &m_imgFeatures.maxRGB[0], NULL, NULL, maskArr[0]);
+  cv::minMaxLoc(rgbChannels[1], &m_imgFeatures.minRGB[1], &m_imgFeatures.maxRGB[1], NULL, NULL, maskArr[1]);
+  cv::minMaxLoc(rgbChannels[2], &m_imgFeatures.minRGB[2], &m_imgFeatures.maxRGB[2], NULL, NULL, maskArr[2]);
 
-  cv::minMaxLoc(hsvChannels[0], &m_imgFeatures.minHSV[0], &m_imgFeatures.maxHSV[0]);
-  cv::minMaxLoc(hsvChannels[1], &m_imgFeatures.minHSV[1], &m_imgFeatures.maxHSV[1]);
-  cv::minMaxLoc(hsvChannels[2], &m_imgFeatures.minHSV[2], &m_imgFeatures.maxHSV[2]); 
+  cv::minMaxLoc(hsvChannels[0], &m_imgFeatures.minHSV[0], &m_imgFeatures.maxHSV[0], NULL, NULL, maskArr[0]);
+  cv::minMaxLoc(hsvChannels[1], &m_imgFeatures.minHSV[1], &m_imgFeatures.maxHSV[1], NULL, NULL, maskArr[1]);
+  cv::minMaxLoc(hsvChannels[2], &m_imgFeatures.minHSV[2], &m_imgFeatures.maxHSV[2], NULL, NULL, maskArr[2]);
 }
+
+void Server::getContours(){
+
+  cv::Mat src_gray = m_skinMask.clone();
+  //cv::Mat src_gray = cv::imread("/home/lucas/Pictures/handMask.png", 1);
+  
+  std::vector < std::vector<cv::Point> > contours;
+  std::vector<cv::Vec4i> hierarchy;
+  cv::Mat canny_output;
+  double thresh = 100;
+  cv::Canny(src_gray, canny_output, thresh, thresh * 2, 3, true);
+  cv::findContours(canny_output, contours, hierarchy, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+  saveImg(canny_output, "edges.jpg");
+  
+  float maxArea = 0;
+  int maxIdx = 0;
+
+  for(unsigned int i = 0; i < contours.size(); i++){
+    std::vector<cv::Point> cnt = contours[i];
+    float area = cv::contourArea(cnt);
+    // std::cout << area << std::endl;
+    if(area > maxArea){
+      maxArea = area;
+      maxIdx = i;
+    }
+  }
+
+  std::vector<int> hull;
+  std::vector<cv::Vec4i> hullDefects;
+  cv::Mat tmp = m_left.clone();
+  cv::convexHull( cv::Mat(contours[maxIdx]), hull, false, false);
+
+  if(hull.size() > 3){
+    cv::drawContours(tmp, contours, maxIdx, cv::Scalar(255, 255, 255), 10);
+    cv::convexityDefects(cv::Mat(contours[maxIdx]), cv::Mat(hull), hullDefects);
+    std::cout << findHand(contours[maxIdx], hull, hullDefects, tmp) << std::endl;
+  }
+}
+
+int Server::findHand(std::vector<cv::Point> contour, std::vector<int> hull, std::vector<cv::Vec4i> hullDefects, cv::Mat tmp){
+
+  cv::Moments M = cv::moments(contour);
+  cv::Point2f mc = cv::Point2f( M.m10/M.m00 , M.m01/M.m00 );
+  cv::Mat tmp2 = tmp.clone();
+
+  int cnt = 0;
+  for(unsigned int i = 0; i < hullDefects.size(); i++){
+    int s = (hullDefects[i])[0];
+    int e = (hullDefects[i])[1];
+    int f = (hullDefects[i])[2];
+    int d = (hullDefects[i])[3];
+
+    cv::Point start = contour[s];
+    cv::Point end = contour[e];
+    cv::Point far = contour[f];
+    float angle = calcAngle(far, start, end);
+
+    if(d > 1000 && angle <= CV_PI / 2){
+      cnt += 1;
+      cv::circle(tmp2, start, 8, cv::Scalar(255, 0, 0));
+      cv::circle(tmp2, end, 8, cv::Scalar(0, 255, 0));
+      cv::circle(tmp2, far, 8, cv::Scalar(0, 0, 255));
+    }
+  }
+  cv::circle(tmp2, mc, 8, cv::Scalar(0, 0, 255), 8);
+  saveImg(tmp2, "tmp.jpg");
+  return cnt;
+}
+
+float Server::calcAngle(cv::Point f, cv::Point s, cv::Point e){
+  float a = sqrt((e.x - s.x) * (e.x - s.x) + (e.y - s.y) * (e.y - s.y));
+  float b = sqrt((f.x - s.x) * (f.x - s.x) + (f.y - s.y) * (f.y - s.y));
+  float c = sqrt((e.x - f.x) * (e.x - f.x) + (e.y - f.y) * (e.y - f.y));
+  float angle = acos((b*b + c*c - a*a) / (2*b*c));
+  return angle;
+}
+
