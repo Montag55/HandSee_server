@@ -115,6 +115,7 @@ cv::Mat Server::createDisplacementMap(){
   //cv::absdiff(filter_Disp_vis, cv::Scalar(255, 255, 255), masked);
   // saveImg(filter_Disp_vis, "disparity.jpg");
   // saveImg(masked, "disparityMasked.jpg");
+  //std::cout << m_fingers.size() << std::endl;
   return masked;
 }
 
@@ -407,11 +408,12 @@ std::vector<cv::Scalar> Server::retrieveAvgDisplacement(cv::Mat disMap){
     cv::circle(mask, movedPoint, 2, cv::Scalar(255, 255, 255), 2);
     cv::circle(maskTotal, movedPoint, 2, cv::Scalar(255, 255, 255), 2);
     cv::warpPerspective(mask, mask, m_imgFeatures.m_H1, mask.size());
+
     depthAvgs.push_back(cv::mean(disMap, mask));
   }
 
-
   cv::warpPerspective(maskTotal, maskTotal, m_imgFeatures.m_H1, maskTotal.size());
+  disMap = disMap + maskTotal;
   //saveImg(maskTotal + m_left, "point.jpg");
 
   return depthAvgs;
@@ -484,7 +486,7 @@ void Server::getContours(){
     if(hull.size() > 3){
       cv::drawContours(tmp, contours, maxIdx, cv::Scalar(255, 255, 255), 10);
       cv::convexityDefects(cv::Mat(contours[maxIdx]), cv::Mat(hull), hullDefects);
-      std::cout << findHand(contours[maxIdx], hull, hullDefects, tmp) << std::endl;
+      findHand(contours[maxIdx], hull, hullDefects, tmp);
     }
   }
  
@@ -566,8 +568,9 @@ int Server::readStream(){
 
         rectification();
         cv::Mat result = createDisplacementMap();
-
+        std::vector<cv::Scalar> tmp = retrieveAvgDisplacement(result);
         cv::imshow("Output Window", result);
         if(cv::waitKey(1) >= 0) break;
+        m_fingers.clear();
     }   
 }
