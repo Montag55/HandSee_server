@@ -44,6 +44,7 @@ class Server{
     long m_server_in_port;
     int m_buffer_size;
     int m_leftRightSwitch;
+    int m_frameCnt;
 
     cv::Mat m_left, m_right, m_skinMask, m_colHist, m_srcImg;
 

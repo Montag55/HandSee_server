@@ -11,6 +11,7 @@ Server::Server(char* server_ip, char* server_port, int buffer_size):
     m_buffer.resize(m_buffer_size);
     m_initializationStatus = false;
     m_leftRightSwitch = 0;
+    m_frameCnt = 0;
 
     initializeMatchers();
     initializeWLSFilter();
@@ -114,7 +115,8 @@ cv::Mat Server::createDisplacementMap(){
   cv::normalize(masked, masked, 255.0f, 0, cv::NORM_MINMAX);
   //cv::absdiff(filter_Disp_vis, cv::Scalar(255, 255, 255), masked);
   // saveImg(filter_Disp_vis, "disparity.jpg");
-  // saveImg(masked, "disparityMasked.jpg");
+  saveImg(masked, "../Video/frame" + std::to_string(m_frameCnt) + ".jpg");
+  m_frameCnt += 1;
   //std::cout << m_fingers.size() << std::endl;
   return masked;
 }
